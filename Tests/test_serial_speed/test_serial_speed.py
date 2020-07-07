@@ -35,7 +35,7 @@ def test_together():
     print('Sending request for speed')
     ser.write(b'speed\n')
     ser.write(b'throttle\n')
-    speed = ser.read_line()
+    speed = ser.readline()
     throttle = ser.readline()
     duration = time.time() - start_time
     print('Duration is:', duration, ', speed:', speed, 'throttle:', throttle)
