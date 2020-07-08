@@ -89,10 +89,10 @@ class TeensyMC:
         else:
             self.ser.write(b'command shutdown\n')
 
-    def run_threaded(self, *speed_and_throttle):
-        if self.mode == OperationMode.auto and len(speed_and_throttle) == 2:
-            self.speed = speed_and_throttle[0]
-            self.steering = speed_and_throttle[1]
+    def run_threaded(self, *throttle_and_steering):
+        if self.mode == OperationMode.auto and len(throttle_and_steering) == 2:
+            self.speed = throttle_and_steering[0]
+            self.steering = throttle_and_steering[1]
             self.__command(self.speed, self.steering)
 
         return self.speed, self.throttle, self.steering  # Be very careful with the order
