@@ -37,25 +37,27 @@ class OperationMode(Enum):
 
 
 class TeensyMC:
-    def __init__(self, mode=OperationMode.manual):
+    def __init__(self, mode=OperationMode.manual, port='/dev/ttyACM0', baudrate=115200, timeout=100, pollInterval=25):
         # Params for tweaking
-        port = '/dev/ttyACM0'
-        baudrate = 9600
-        self.timeout = 100  # ms before watchdog kicks in
-        self.pollFreq = 5  # ms between each polling
+        self.timeout = timeout  # ms before watchdog kicks in
+        self.pollInterval = pollInterval  # ms between each polling
 
-        self.running = True;
+        self.running = True
         self.ser = serial.Serial(port=port, baudrate=baudrate)
         self.mode = mode
-        self.watchdog = Watchdog(threshold=self.timeout, callback=self.watchdog_alert)
+        self.watchdog_subthread = Watchdog(threshold=self.timeout, callback=self.watchdog_alert_subthread)
+        self.watchdog_mainthread = Watchdog(threshold=self.timeout, callback=self.watchdog_alert_mainthread)
+        self.watchdog_subthread.start_watchdog(1000)
+        self.watchdog_mainthread.start_watchdog(1000)
 
         self.speed = 0.0
         self.throttle = 0.0
         self.steering = 0.0
 
     def update(self):
-        self.__poll()
-        time.sleep(self.pollFreq / 1000.0)
+        while self.running:
+            self.__poll()
+            time.sleep(self.pollInterval / 1000.0)
 
     def __poll(self):
         """Get input values from Teensy in manual mode"""
@@ -66,47 +68,65 @@ class TeensyMC:
         sbc_message = 'poll'  # The message to be sent back. a single 'poll' means polling every information
         number_in_message = re.findall(r'\d+\.*\d*', mcu_message)  # Find number in message
 
-        if number_in_message is not None:
-            self.watchdog.reset_countdown()  # Reset watchdog as soon as data is received
+        self.watchdog_subthread.reset_countdown()  # Reset watchdog as soon as data is received
 
-            if 'speed' in mcu_message:
-                self.speed = number_in_message[0]
-                sbc_message += ' speed'
-            elif 'throttle' in mcu_message:
-                self.throttle = number_in_message[0]
-                sbc_message += ' throttle'
-            elif 'steering' in mcu_message:
-                self.steering = number_in_message[0]
-                sbc_message += ' steering'
+        if 'speed' in mcu_message:
+            self.speed = number_in_message[0]
+            sbc_message += ' speed'
+        elif 'throttle' in mcu_message:
+            self.throttle = number_in_message[0]
+            sbc_message += ' throttle'
+        elif 'steering' in mcu_message:
+            self.steering = number_in_message[0]
+            sbc_message += ' steering'
+        elif 'mode' in mcu_message:
+            self.mode = OperationMode.auto if 'auto' in mcu_message else OperationMode.manual
+            sbc_message += ' mode'
 
         self.ser.write(bytes(sbc_message + '\n'))
 
-    def __command(self, speed=0, steering=0, shutdown=False):
+    def __command(self, throttle=None, speed=None, steering=0, shutdown=False):
         """Send Instructions to Teensy in auto mode"""
+        # print (speed, steering)
+        msg = ''
         if not shutdown:
-            self.ser.write(b'command speed ' + bytes(speed) + b'\n')
-            self.ser.write(b'command steering ' + bytes(steering) + b'\n')
+            if throttle is not None:
+                msg = f'command throttle {throttle}\n'
+            else:
+                msg = f'command speed {speed}\n'
+            msg += f'command steering {steering}\n'
         else:
-            self.ser.write(b'command shutdown\n')
+            msg = 'command shutdown\n'
+
+        self.ser.write(bytes(msg, 'utf-8'))
 
     def run_threaded(self, *speed_and_steering):
+        self.watchdog_mainthread.reset_countdown()
         if self.mode == OperationMode.auto and len(speed_and_steering) == 2:
             self.speed = speed_and_steering[0]
             self.steering = speed_and_steering[1]
             self.__command(self.speed, self.steering)
 
-        return self.speed, self.throttle, self.steering  # Be very careful with the order
+        # return self.speed, self.throttle, self.steering  # Be very careful with the order
 
     def shutdown(self):
-        if self.running:
-            self.running = False
-            self.__command(shutdown=True)
-            self.ser.close()
-            self.watchdog.shutdown()
+        self.running = False
+        self.__command(shutdown=True)
+        self.ser.close()
 
-    def watchdog_alert(self):
-        """Callback function when watchdog is alarmed"""
+    def watchdog_alert_mainthread(self):
+        """Callback function when mainthread watchdog is alarmed
+            Called when donkey main thread is stuck"""
+        self.watchdog_mainthread.shutdown()
         self.shutdown()
+        raise RuntimeError('[Watchdog Alert] Donkey mainthread locked.')
+
+    def watchdog_alert_subthread(self):
+        '''Callback function when subthread watchdog is alarmed
+            Serial disconnect, thread locked, etc.'''
+        self.watchdog_subthread.shutdown()
+        raise RuntimeError('[Watchdog Alert] Polling from MCU timeout.')
+
 
 
 class Watchdog:
