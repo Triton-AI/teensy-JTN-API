@@ -3,6 +3,8 @@
 
 Communicate between the single-board computer (Jetson Nano) and a teensy microcontroller to control the peripherials such as electronic speed controller (ESC) and servo. Retrieve speedometer readings from the brushless sensored motor.
 
+Compatable with donkeycar autonomous driving platform.
+
 ### Serial
 0.5~1 ms transmission of small literal message
 
